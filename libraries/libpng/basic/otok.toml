@@ -1,6 +1,7 @@
-# libpng as its recipe builds it by default: for every Apple platform with the zlib of the SDK; for Windows (MSVC) and
-# Linux (GCC), in both configurations, with the zlib of its own recipe. Each target in an output of its own. The linkage
-# is the target's default (static) unless a profile changes it.
+# libpng as its recipe builds it by default: for every Apple platform with the zlib of the SDK; for every Android ABI
+# with the zlib of the NDK; for Windows (MSVC) and Linux (GCC) with the zlib of its own recipe; Android, Windows and Linux
+# in both configurations. Each target in an output of its own. The linkage is the target's default (static) unless a
+# profile changes it.
 [otok]
 format = 1
 
@@ -10,6 +11,11 @@ deployment = { macos = "12.0", ios = "15.0", tvos = "15.0", watchos = "8.0", vis
 # Apple Watch's arm64 exists only from watchOS 26: below it, arm64_32 alone
 architectures = { watchos = ["arm64_32"] }
 output = "Otok/apple"
+
+[android]
+deployment = { android = "24" }
+configurations = ["debug", "release"]
+output = "Otok/android"
 
 [windows]
 build-on = ["windows/msvc"]

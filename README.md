@@ -73,19 +73,20 @@ of the copy.
 | `windows` | the machine's architecture, Debug and Release (Visual Studio generator) | the other architecture |
 | `linux` | the machine's architecture, Debug and Release; `ldd` must find the output's shared objects in the output or beside the program | |
 | `apple` | macOS (the machine's architecture: a fat program runs its slice), the simulators through `xcrun simctl spawn` on a booted device or one of the newest runtime, booted for it; one Release build per platform with all its architectures (Ninja); Mac Catalyst, which CMake has not, with the Xcode generator for iOS with `SUPPORTS_MACCATALYST`, built by `xcodebuild` for its destination (signed ad hoc, without the hardened runtime) | devices, a platform without the machine's architecture |
-| `android` | not yet: the emulators | the other ABIs |
+| `android` | the ABIs of an emulator's own processor (x86_64 on a PC), Debug and Release: the emulator adb sees, or the last AVD of the SDK started headless for the run and stopped after it; the program, the output's shared objects of its ABI and `libc++_shared.so` pushed into one directory (as an app's native libraries are) and run there; a phone on USB only with `--device` | the other ABIs, and those an emulator translates (its namespace takes no `LD_LIBRARY_PATH`) |
 
 Options: `--index DIR` reads the index from a checkout of `otok-dev/index` or a view (`OTOK_INDEX_MIRROR`), so that a
 run checks one commit of it; `--status DIR` keeps the lock of each passing run, and `--changed` skips the runs whose lock
 is the same, which is how an index change finds what it touches (reverse dependencies and tool recipes included);
 `--recipe LIBRARY=DIR` builds a library with a local recipe (`{target}` in `DIR` needs one `--target`); `--otok`,
-`--cmake`, `--generator`; `--json FILE` writes the results.
+`--cmake`, `--generator`; `--android-sdk`, `--avd`, `--device SERIAL` (a phone on USB: the run writes into its
+`/data/local/tmp/otok-examples`); `--json FILE` writes the results.
 
 ## Status
 
-Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for `windows`, `linux` and
-`apple` (all ten platforms), cases for zlib and libpng. Next: `android`, SwiftPM, MSBuild and Gradle consumers for a few
-libraries, the
+Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for every target (`windows`,
+`linux`, `apple` on all ten platforms, `android`), cases for zlib and libpng. Next: SwiftPM, MSBuild and Gradle consumers
+for a few libraries, the
 `basic` case of every library, CI on the build machines (never on pull requests) with the results in the branch
 `status`.
 

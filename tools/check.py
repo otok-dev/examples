@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LEVELS = ["failed", "resolved", "installed", "configured", "linked", "ran"]
 TARGETS = ["apple", "android", "windows", "linux"]
-CONSUMED = {"windows", "linux", "apple"}  # targets whose consumers the driver builds so far (README.md, "Status")
+CONSUMED = {"windows", "linux", "apple", "android"}  # targets whose consumers the driver builds so far (README.md, "Status")
 PROFILE = "otok-examples"
 
 
@@ -101,6 +101,7 @@ class Tools:
         self.otok = args.otok or shutil.which("otok") or sys.exit("otok is not on PATH; give --otok")
         self.cmake = args.cmake or shutil.which("cmake") or find_visual_studio_cmake() or sys.exit("cmake is not on PATH; give --cmake")
         self.generator = args.generator
+        self.android = AndroidDevice(args.android_sdk, args.avd, args.device)
         self.env = dict(os.environ)
         if args.index:
             # the index at one commit: a checkout of otok-dev/index or a view (config.md 2)
@@ -316,6 +317,9 @@ def check_consumer(tools: Tools, case: Case, base: Path, target: str, table: dic
                 runs = arch == machine_arch()
                 record(f"{arch}/{c}", "ran" if runs else "linked",
                        build_and_run(build, c, build / c.capitalize() / f"example{exe}", runs) if configured else "installed")
+    elif target == "android":
+        check_android(tools, base, source, provider, output, table, configurations, arguments, expect, table.get("linkage", "static"),
+                      log, record)
     elif target == "apple":
         # one build per platform with all its architectures: the program runs the machine's slice, on macOS itself and on
         # a simulator through simctl; a device's, or one without the machine's architecture, only links
@@ -437,6 +441,151 @@ def foreign_libraries(program: Path, output: Path, log: Path) -> list[str]:
     return foreign
 
 
+# --- Android ----------------------------------------------------------------------------------------------------------
+
+NDK_TRIPLES = {"arm64-v8a": "aarch64-linux-android", "armeabi-v7a": "arm-linux-androideabi", "x86": "i686-linux-android",
+               "x86_64": "x86_64-linux-android"}
+
+
+class AndroidDevice:
+    """A device for running programs: an emulator adb sees, or one of the SDK started for the run (headless) and stopped
+    at its end. A phone on USB only when --device names it: the run writes into its /data/local/tmp."""
+
+    def __init__(self, sdk: str | None, avd: str | None, serial: str | None):
+        self.sdk = Path(sdk) if sdk else find_android_sdk()
+        self.avd = avd
+        self.wanted = serial
+        self.serial: str | None = None
+        self.abis: list[str] = []
+        self.started: subprocess.Popen | None = None
+        self.tried = False
+
+    def adb(self) -> str:
+        return str(self.sdk / "platform-tools" / ("adb.exe" if platform.system() == "Windows" else "adb")) if self.sdk else "adb"
+
+    def prepare(self, log: Path) -> bool:
+        if self.tried:
+            return self.serial is not None
+        self.tried = True
+        if not self.sdk or not Path(self.adb()).exists():
+            return False
+        serials = self._devices()
+        if not serials and self.wanted:
+            return False
+        if not serials:
+            emulator = self.sdk / "emulator" / ("emulator.exe" if platform.system() == "Windows" else "emulator")
+            avds = subprocess.run([str(emulator), "-list-avds"], stdout=subprocess.PIPE, text=True).stdout.split() if emulator.exists() else []
+            avd = self.avd or (avds[-1] if avds else None)
+            if not avd:
+                return False
+            with open(log, "a", encoding="utf-8") as out:
+                out.write(f"\n$ {emulator} -avd {avd} -no-window -no-audio -no-boot-anim -no-snapshot-save\n")
+            self.started = subprocess.Popen([str(emulator), "-avd", avd, "-no-window", "-no-audio", "-no-boot-anim", "-no-snapshot-save"],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + 300
+            while time.monotonic() < deadline and not serials:
+                time.sleep(2)
+                serials = self._devices()
+            if not serials:
+                return False
+        self.serial = serials[0]
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            booted = self._shell("getprop sys.boot_completed").stdout.strip()
+            if booted == "1":
+                break
+            time.sleep(2)
+        self.abis = self._shell("getprop ro.product.cpu.abilist").stdout.strip().split(",")
+        # an emulator translating ARM (native bridge) runs those programs in a namespace of its own, which takes no
+        # LD_LIBRARY_PATH: the ABIs of its own processor alone run, the translated ones only link
+        if self._shell("getprop ro.dalvik.vm.native.bridge").stdout.strip() not in ("", "0"):
+            family = "x86" if self.abis and self.abis[0].startswith("x86") else "arm"
+            self.abis = [a for a in self.abis if a.startswith("x86") == (family == "x86")]
+        return True
+
+    def _devices(self) -> list[str]:
+        listed = subprocess.run([self.adb(), "devices"], stdout=subprocess.PIPE, text=True).stdout.splitlines()[1:]
+        serials = [line.split()[0] for line in listed if line.strip().endswith("device")]
+        if self.wanted:
+            return [s for s in serials if s == self.wanted]
+        return [s for s in serials if s.startswith("emulator-")]
+
+    def _shell(self, command: str) -> subprocess.CompletedProcess:
+        return subprocess.run([self.adb(), "-s", self.serial, "shell", command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              encoding="utf-8", errors="replace")
+
+    def run(self, tools: Tools, program: Path, libraries: list[Path], arguments: list, log: Path) -> subprocess.CompletedProcess:
+        """The program and the shared objects it loads in one directory, as an app's are in its native library
+        directory, run from there."""
+        remote = "/data/local/tmp/otok-examples"
+        tools.run([self.adb(), "-s", self.serial, "shell", f"rm -rf {remote} && mkdir -p {remote}"], ROOT, log)
+        for f in [program, *libraries]:
+            tools.run([self.adb(), "-s", self.serial, "push", f, f"{remote}/{f.name}"], ROOT, log)
+        command = f"cd {remote} && chmod 755 {program.name} && LD_LIBRARY_PATH={remote} ./{program.name}"
+        command += "".join(" " + shlex_quote(a) for a in arguments)
+        return tools.run([self.adb(), "-s", self.serial, "shell", command], ROOT, log)
+
+    def stop(self) -> None:
+        if self.started:
+            subprocess.run([self.adb(), "-s", self.serial or "emulator-5554", "emu", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                self.started.wait(60)
+            except subprocess.TimeoutExpired:
+                self.started.kill()
+
+
+def shlex_quote(text: str) -> str:
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def find_android_sdk() -> Path | None:
+    for name in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if os.environ.get(name):
+            return Path(os.environ[name])
+    for candidate in (Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk", Path.home() / "Library" / "Android" / "sdk",
+                      Path.home() / "Android" / "Sdk"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def check_android(tools: Tools, base: Path, source: Path, provider: str, output: Path, table: dict, configurations: list,
+                  arguments: list, expect: str, linkage: str, log: Path, record) -> None:
+    """The NDK's toolchain file per ABI and configuration with Ninja; the ABIs of the device (an emulator) run there."""
+    ndk = Path((table.get("toolchain") or {}).get("ndk", ""))
+    toolchain = ndk / "build" / "cmake" / "android.toolchain.cmake"
+    api = table.get("deployment", {}).get("android", "24")
+    device = tools.android
+    runs_on = device.abis if device.prepare(log) else []
+    for abi in table["architectures"].get("android", []):
+        for c in configurations:
+            key = f"{abi}/{c}"
+            runnable = abi in runs_on
+            build = base / f"{abi}-{c}"
+            shutil.rmtree(build, ignore_errors=True)
+            configure = [tools.cmake, "-S", source, "-B", build, "-G", "Ninja", f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={provider}",
+                         f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}", f"-DANDROID_ABI={abi}", f"-DANDROID_PLATFORM=android-{api}",
+                         f"-DCMAKE_BUILD_TYPE={c.capitalize()}"]
+            if linkage == "dynamic":
+                configure.append("-DANDROID_STL=c++_shared")  # what dynamic libraries of stl = "shared" need (otok-toml.md 4.7)
+            if tools.run(configure, source, log).returncode != 0:
+                record(key, "ran" if runnable else "linked", "installed")
+                continue
+            if tools.run([tools.cmake, "--build", build], source, log).returncode != 0:
+                record(key, "ran" if runnable else "linked", "configured")
+                continue
+            if not runnable:
+                record(key, "linked", "linked")
+                continue
+            lib = "debug/lib" if c == "debug" else "lib"
+            libraries = sorted(output.glob(f"*/{lib}/{abi}/*.so"))
+            if linkage == "dynamic":
+                libraries += sorted(ndk.glob(f"toolchains/llvm/prebuilt/*/sysroot/usr/lib/{NDK_TRIPLES[abi]}/libc++_shared.so"))[:1]
+            result = device.run(tools, build / "example", libraries, arguments, log)
+            last = result.stdout.strip().splitlines()[-1:] if result.stdout.strip() else []
+            record(key, "ran", "ran" if result.returncode == 0 and last == [expect] else "linked")
+
+
 # --- main -----------------------------------------------------------------------------------------------------------
 
 
@@ -453,6 +602,9 @@ def main() -> int:
     parser.add_argument("--status", help="directory of the locks of passing runs (the branch 'status')")
     parser.add_argument("--changed", action="store_true", help="with --status: skip runs whose lock is that of their last passing run")
     parser.add_argument("--json", help="write the results to this file")
+    parser.add_argument("--android-sdk", help="the Android SDK, for adb and the emulator (default: ANDROID_HOME, ANDROID_SDK_ROOT or its usual place)")
+    parser.add_argument("--avd", help="the emulator to start when adb sees no device (default: the last of emulator -list-avds)")
+    parser.add_argument("--device", help="run on this device of adb (a phone on USB) instead of an emulator")
     parser.add_argument("--recipe", action="append", default=[], metavar="LIBRARY=DIR",
                         help="build LIBRARY with the recipe in DIR, where {target} stands for the target (a fix not yet published)")
     args = parser.parse_args()
@@ -492,6 +644,7 @@ def main() -> int:
                 if run.status == "failed":
                     print(f"  log: {run.log}", flush=True)
 
+    tools.android.stop()
     if args.json:
         Path(args.json).write_text(json.dumps([dataclasses.asdict(r) for r in runs], indent=2) + "\n", encoding="utf-8")
     counts = {s: sum(1 for r in runs if r.status == s) for s in ("passed", "failed", "unsupported", "unchanged", "skipped")}
