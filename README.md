@@ -72,7 +72,7 @@ of the copy.
 |---|---|---|
 | `windows` | the machine's architecture, Debug and Release (Visual Studio generator) | the other architecture |
 | `linux` | the machine's architecture, Debug and Release; `ldd` must find the output's shared objects in the output or beside the program | |
-| `apple` | not yet: macOS, Mac Catalyst and the simulators (`simctl spawn`) | devices |
+| `apple` | macOS (the machine's architecture: a fat program runs its slice), the simulators through `xcrun simctl spawn` on a booted device or one of the newest runtime, booted for it; one Release build per platform with all its architectures (Ninja); Mac Catalyst, which CMake has not, with the Xcode generator for iOS with `SUPPORTS_MACCATALYST`, built by `xcodebuild` for its destination (signed ad hoc, without the hardened runtime) | devices, a platform without the machine's architecture |
 | `android` | not yet: the emulators | the other ABIs |
 
 Options: `--index DIR` reads the index from a checkout of `otok-dev/index` or a view (`OTOK_INDEX_MIRROR`), so that a
@@ -83,8 +83,9 @@ is the same, which is how an index change finds what it touches (reverse depende
 
 ## Status
 
-Started 2026-11-20 (decisions 131 and 132 of otok's plan): the driver and the CMake consumer for `windows` and `linux`,
-cases for zlib and libpng. Next: `apple` and `android`, SwiftPM, MSBuild and Gradle consumers for a few libraries, the
+Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for `windows`, `linux` and
+`apple` (all ten platforms), cases for zlib and libpng. Next: `android`, SwiftPM, MSBuild and Gradle consumers for a few
+libraries, the
 `basic` case of every library, CI on the build machines (never on pull requests) with the results in the branch
 `status`.
 

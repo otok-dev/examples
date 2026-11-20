@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LEVELS = ["failed", "resolved", "installed", "configured", "linked", "ran"]
 TARGETS = ["apple", "android", "windows", "linux"]
-CONSUMED = {"windows", "linux"}  # targets whose consumers the driver builds so far (README.md, "Status")
+CONSUMED = {"windows", "linux", "apple"}  # targets whose consumers the driver builds so far (README.md, "Status")
 PROFILE = "otok-examples"
 
 
@@ -220,9 +220,13 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
     if installed.returncode != 0:
         return whole("failed", "resolved", "otok install failed")
     skipped = dict(re.findall(r"^note: not building for '([^']+)': (.*)$", installed.stdout, re.M))
+    # the target tables as otok reads them, the profile applied: output, platforms, architectures, configurations
+    metadata = subprocess.run([tools.otok, "metadata", *profile], cwd=project, env=tools.env, stdout=subprocess.PIPE, text=True,
+                              encoding="utf-8", errors="replace")
+    tables = {t["name"]: t for t in json.loads(metadata.stdout)["targets"]} if metadata.returncode == 0 else {}
 
     runs = []
-    for target, table in case.tables().items():
+    for target in case.tables():
         if target not in targets:
             continue
         run = Run(case.id, label, target, "installed", "failed", log=str(log))
@@ -233,7 +237,10 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
         if target not in CONSUMED:
             run.status, run.message = "skipped", "the driver builds no consumer of this target yet"
             continue
-        check_consumer(tools, case, project / f"consumer-{target}", project / table.get("output", "Otok"), target, table, run, log)
+        if target not in tables:
+            run.message = "otok metadata failed"
+            continue
+        check_consumer(tools, case, project / f"consumer-{target}", target, tables[target], run, log)
     for run in runs:
         run.seconds = round(time.monotonic() - started, 1)
     if stored and runs and all(r.status in ("passed", "skipped") for r in runs) and any(r.status == "passed" for r in runs):
@@ -242,18 +249,35 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
     return runs or whole("skipped", "installed", "none of the case's target tables is one this machine builds")
 
 
-def check_consumer(tools: Tools, case: Case, base: Path, output: Path, target: str, table: dict, run: Run, log: Path) -> None:
-    """Configure, build and run the CMake consumer of one target table in each configuration and architecture."""
+# Apple's platforms in CMake: CMAKE_SYSTEM_NAME, the SDK, the deployment key of otok.toml and the simulator's runtime
+# family (None: a device, whose programs only link). CMake has no Mac Catalyst (otok-toml.md 4).
+APPLE_PLATFORMS = {
+    "macosx": ("Darwin", "macosx", "macos", None),
+    "ios": ("iOS", "iphoneos", "ios", None),
+    "iossim": ("iOS", "iphonesimulator", "ios", "iOS"),
+    "tvos": ("tvOS", "appletvos", "tvos", None),
+    "tvossim": ("tvOS", "appletvsimulator", "tvos", "tvOS"),
+    "watchos": ("watchOS", "watchos", "watchos", None),
+    "watchossim": ("watchOS", "watchsimulator", "watchos", "watchOS"),
+    "xros": ("visionOS", "xros", "visionos", None),
+    "xrossim": ("visionOS", "xrsimulator", "visionos", "xrOS"),
+}
+
+
+def check_consumer(tools: Tools, case: Case, base: Path, target: str, table: dict, run: Run, log: Path) -> None:
+    """Configure, build and run the CMake consumer of one target table (as `otok metadata` gives it) in each
+    configuration, platform and architecture."""
+    output = Path(table["output"])
     source = base / "source"
     source.mkdir(parents=True, exist_ok=True)
     write_if_changed(source / "CMakeLists.txt", (ROOT / "consumers/cmake/CMakeLists.txt").read_text(encoding="utf-8"))
     write_if_changed(source / "example.cmake", consumer_settings(case, output))
-    configurations = [c for c in ["debug", "release"] if c in table.get("configurations", ["release"])]
+    configurations = [c for c in ["debug", "release"] if c in table["configurations"]]
     provider = (output / "otok-provider.cmake").as_posix()
     example = case.example.get("example", {})
     arguments = [str(a).replace("{case}", case.directory.as_posix()) for a in example.get("args", [])]
     expect = example.get("expect", "ok")
-    expected: dict[str, str] = {}  # "<arch>/<configuration>" -> the level it must reach
+    expected: dict[str, str] = {}  # "<platform or arch>/<configuration>" -> the level it must reach
 
     def configure(build: Path, extra: list) -> bool:
         shutil.rmtree(build, ignore_errors=True)
@@ -262,12 +286,12 @@ def check_consumer(tools: Tools, case: Case, base: Path, output: Path, target: s
             command += ["-G", tools.generator]
         return tools.run(command, source, log).returncode == 0
 
-    def build_and_run(build: Path, configuration: str, program: Path, runs: bool) -> str:
+    def build_and_run(build: Path, configuration: str, program: Path, runs: bool, launcher: list | None = None) -> str:
         if tools.run([tools.cmake, "--build", build, "--config", configuration.capitalize()], source, log).returncode != 0:
             return "configured"
         if not runs:
             return "linked"
-        result = tools.run([program, *arguments], program.parent, log, env=clean_run_environment())
+        result = tools.run([*(launcher or []), program, *arguments], program.parent, log, env=clean_run_environment())
         last = result.stdout.strip().splitlines()[-1:] if result.stdout.strip() else []
         if result.returncode != 0 or last != [expect]:
             return "linked"
@@ -278,31 +302,115 @@ def check_consumer(tools: Tools, case: Case, base: Path, output: Path, target: s
             return "linked"
         return "ran"
 
+    def record(key: str, wanted: str, reached: str) -> None:
+        expected[key] = wanted
+        run.configurations[key] = reached
+
     exe = ".exe" if platform.system() == "Windows" else ""
     if target == "windows":
         # the Visual Studio generator, one build directory per architecture; the machine's runs, the other links
-        for arch in table.get("architectures", {}).get("windows", ["x86_64", "arm64"]):
+        for arch in table["architectures"].get("windows", ["x86_64"]):
             build = base / arch
             configured = configure(build, ["-A", "ARM64" if arch == "arm64" else "x64"])
             for c in configurations:
-                key = f"{arch}/{c}"
-                expected[key] = "ran" if arch == machine_arch() else "linked"
-                run.configurations[key] = build_and_run(build, c, build / c.capitalize() / f"example{exe}", arch == machine_arch()) \
-                    if configured else "installed"
+                runs = arch == machine_arch()
+                record(f"{arch}/{c}", "ran" if runs else "linked",
+                       build_and_run(build, c, build / c.capitalize() / f"example{exe}", runs) if configured else "installed")
+    elif target == "apple":
+        # one build per platform with all its architectures: the program runs the machine's slice, on macOS itself and on
+        # a simulator through simctl; a device's, or one without the machine's architecture, only links
+        for p in table["platforms"]:
+            if p == "catalyst":
+                for c in configurations:
+                    record(f"{p}/{c}", "ran" if machine_arch() in table["architectures"].get(p, []) else "linked",
+                           check_catalyst(tools, base / p, source, provider, table, arguments, expect, log))
+                continue
+            if p not in APPLE_PLATFORMS:
+                run.message = (run.message + "; " if run.message else "") + f"{p}: CMake builds no consumer for it"
+                continue
+            system, sdk, deployment, family = APPLE_PLATFORMS[p]
+            arches = table["architectures"].get(p, [])
+            runnable = machine_arch() in arches and (p == "macosx" or family is not None)
+            launcher = simulator_launcher(tools, family, log) if family and runnable else None
+            if family and runnable and launcher is None:
+                runnable = False
+            extra = [f"-DCMAKE_SYSTEM_NAME={system}", f"-DCMAKE_OSX_SYSROOT={sdk}", f"-DCMAKE_OSX_ARCHITECTURES={';'.join(arches)}",
+                     "-DCMAKE_BUILD_TYPE=Release"]
+            if deployment in table.get("deployment", {}):
+                extra.append(f"-DCMAKE_OSX_DEPLOYMENT_TARGET={table['deployment'][deployment]}")
+            build = base / p
+            # CMake makes an executable a bundle on the platforms other than macOS
+            program = build / "example" if p == "macosx" else build / "example.app" / "example"
+            for c in configurations:
+                record(f"{p}/{c}", "ran" if runnable else "linked",
+                       build_and_run(build, c, program, runnable, launcher) if configure(build, extra) else "installed")
     else:
         for c in configurations:
-            key = f"{machine_arch()}/{c}"
-            expected[key] = "ran"
             build = base / c
-            run.configurations[key] = build_and_run(build, c, build / f"example{exe}", True) \
-                if configure(build, [f"-DCMAKE_BUILD_TYPE={c.capitalize()}"]) else "installed"
+            record(f"{machine_arch()}/{c}", "ran",
+                   build_and_run(build, c, build / f"example{exe}", True) if configure(build, [f"-DCMAKE_BUILD_TYPE={c.capitalize()}"]) else "installed")
 
     short = [k for k, level in run.configurations.items() if LEVELS.index(level) < LEVELS.index(expected[k])]
     run.level = min(run.configurations.values(), key=LEVELS.index) if run.configurations else "installed"
     if run.configurations and not short:
         run.status = "passed"
     else:
-        run.message = f"{', '.join(short)}: stopped at {run.configurations[short[0]]}" if short else "nothing was built"
+        problem = f"{', '.join(short)}: stopped at {run.configurations[short[0]]}" if short else "nothing was built"
+        run.message = problem + ("; " + run.message if run.message else "")
+
+
+def check_catalyst(tools: Tools, build: Path, source: Path, provider: str, table: dict, arguments: list, expect: str, log: Path) -> str:
+    """Mac Catalyst, which CMake has not: the Xcode generator for iOS with SUPPORTS_MACCATALYST, built by xcodebuild for
+    the destination of Mac Catalyst. The XCFrameworks are in the link phase (otok-config.cmake sets KNOWN_LOCATION for
+    the Xcode generator), so Xcode picks their slices of Mac Catalyst."""
+    shutil.rmtree(build, ignore_errors=True)
+    deployment = table.get("deployment", {})
+    version = deployment.get("catalyst", deployment.get("ios"))
+    configure = [tools.cmake, "-S", source, "-B", build, "-G", "Xcode", f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={provider}",
+                 "-DCMAKE_SYSTEM_NAME=iOS", "-DCMAKE_OSX_SYSROOT=iphoneos", "-DCMAKE_XCODE_GENERATE_SCHEME=ON",
+                 "-DCMAKE_XCODE_ATTRIBUTE_SUPPORTS_MACCATALYST=YES", "-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=-",
+                 # signed ad hoc, a program of the hardened runtime loads no framework signed apart from it ("different Team
+                 # IDs"); an app signed by its team has its embedded frameworks signed again with it when Xcode copies them
+                 "-DCMAKE_XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME=NO"]
+    if version:
+        configure.append(f"-DCMAKE_OSX_DEPLOYMENT_TARGET={version}")
+    if tools.run(configure, source, log).returncode != 0:
+        return "installed"
+    built = tools.run(["xcodebuild", "-project", build / "otok_example.xcodeproj", "-scheme", "example", "-configuration", "Release",
+                       "-destination", "generic/platform=macOS,variant=Mac Catalyst", f"SYMROOT={build / 'xcode'}"], build, log)
+    if built.returncode != 0:
+        return "configured"
+    program = build / "Release-maccatalyst" / "example.app" / "Contents" / "MacOS" / "example"
+    if machine_arch() not in table["architectures"].get("catalyst", []):
+        return "linked"
+    result = tools.run([program, *arguments], program.parent, log, env=clean_run_environment())
+    last = result.stdout.strip().splitlines()[-1:] if result.stdout.strip() else []
+    return "ran" if result.returncode == 0 and last == [expect] else "linked"
+
+
+_simulators: dict[str, list | None] = {}
+
+
+def simulator_launcher(tools: Tools, family: str, log: Path) -> list | None:
+    """`xcrun simctl spawn <device>` on a booted simulator of the family (iOS, tvOS, watchOS, xrOS), or on one of its
+    newest runtime, booted for it; None when the machine has none."""
+    if family in _simulators:
+        return _simulators[family]
+    listed = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "-j"], stdout=subprocess.PIPE, text=True)
+    devices = []
+    for runtime, entries in json.loads(listed.stdout or "{}").get("devices", {}).items():
+        m = re.search(r"SimRuntime\." + family + r"-(\d+)-(\d+)", runtime)
+        if m:
+            devices += [((e["state"] == "Booted", int(m.group(1)), int(m.group(2))), e["udid"]) for e in entries]
+    if not devices:
+        _simulators[family] = None
+        return None
+    (booted, *_), udid = max(devices)
+    if not booted:
+        tools.run(["xcrun", "simctl", "boot", udid], ROOT, log)
+        tools.run(["xcrun", "simctl", "bootstatus", udid, "-b"], ROOT, log)
+    _simulators[family] = ["xcrun", "simctl", "spawn", udid]
+    return _simulators[family]
 
 
 def foreign_libraries(program: Path, output: Path, log: Path) -> list[str]:
