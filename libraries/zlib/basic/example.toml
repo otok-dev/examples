@@ -1,0 +1,8 @@
+# Compress a buffer and decompress it again.
+[example]
+description = "Compress a buffer with compress2 and restore it with uncompress."
+sources = ["main.c"]
+
+[consumer]
+package = "ZLIB"
+link = ["ZLIB::ZLIB"]

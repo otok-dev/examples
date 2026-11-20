@@ -1,0 +1,18 @@
+# zlib as its recipe builds it by default, for Windows (MSVC) and Linux (GCC), in both configurations; each target in an
+# output of its own. The linkage is the target's default (static) unless a profile changes it.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[linux]
+build-on = ["linux/gcc"]
+configurations = ["debug", "release"]
+output = "Otok/linux"
+
+[deps.zlib]
+recipe = "apotocki/zlib"
+version = "~> 1.3"

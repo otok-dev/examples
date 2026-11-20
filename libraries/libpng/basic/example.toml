@@ -1,0 +1,8 @@
+# Write an image to PNG in memory and read it back: libpng and its zlib.
+[example]
+description = "Encode a small RGBA image to PNG in memory with the simplified API and decode it again."
+sources = ["main.c"]
+
+[consumer]
+package = "PNG"
+link = ["PNG::PNG"]
