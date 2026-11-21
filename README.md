@@ -18,6 +18,8 @@ libraries/<library>/<case>/
   example.toml      how the program is built and checked
   main.c, ...       its sources
 consumers/cmake/    the CMake project every case is built with
+consumers/msbuild/  a project of Visual Studio with otok.props and otok.targets
+consumers/gradle/   an Android app whose native library Gradle's CMake builds (NativeActivity, glue.c)
 tools/check.py      the driver
 ```
 
@@ -50,7 +52,21 @@ components = []                # COMPONENTS of find_package
 link = ["PNG::PNG"]            # what the program links
 c-standard = 11                # C_STANDARD / CXX_STANDARD of the program
 cxx-standard = 17
+consumers = ["cmake", "msbuild", "swiftpm", "gradle"]   # default ["cmake"]: the others for a few libraries
+products = ["PNG"]             # otok's products the program links, for MSBuild (OtokProducts) and SwiftPM
+swift-sources = ["main.swift"] # SwiftPM: a Swift program importing the products' modules, beside the C one
 ```
+
+## The other consumers
+
+CMake checks every case; the others check otok's files for their build systems on the cases that name them, built from
+the same sources:
+
+| Consumer | Where | What |
+|---|---|---|
+| `msbuild` | Windows | `consumers/msbuild/example.vcxproj.in` with the output's `otok.props` and `otok.targets` and `OtokProducts`, built by the MSBuild of Visual Studio for x64 and ARM64 in Debug and Release; the machine's architecture runs, with the DLLs `OtokCopyDlls` put beside it |
+| `swiftpm` | macOS | a package depending on the output's `Package.swift` with an executable target of the C sources and one of `swift-sources`, both on the products, built by `swift build -c release` and run |
+| `gradle` | Android | `consumers/gradle` (AGP 9.5.1, the Gradle wrapper 9.8.0): the C sources and `glue.c` as the app's native library, built by Gradle's CMake (the one of the run, `cmake.dir`) with the NDK of `otok metadata` for every ABI in debug and release; the APK must carry the app's library, the output's shared objects of each ABI and `libc++_shared.so` when the libraries are dynamic; on the emulator's ABIs the app is installed and started, and `glue.c` logs the program's output (tag `otok-example`). Java: `JAVA_HOME` or Android Studio's runtime |
 
 ## Running
 
@@ -80,15 +96,16 @@ run checks one commit of it; `--status DIR` keeps the lock of each passing run, 
 is the same, which is how an index change finds what it touches (reverse dependencies and tool recipes included);
 `--recipe LIBRARY=DIR` builds a library with a local recipe (`{target}` in `DIR` needs one `--target`); `--otok`,
 `--cmake`, `--generator`; `--android-sdk`, `--avd`, `--device SERIAL` (a phone on USB: the run writes into its
-`/data/local/tmp/otok-examples`); `--json FILE` writes the results.
+`/data/local/tmp/otok-examples`); `--json FILE` writes the results. An emulator that is there but does not come up for
+adb (an image of Google Play may wait for adb to be authorized on its screen) fails the Android runs rather than
+leaving them linked only; its data partition must have room for the app.
 
 ## Status
 
 Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for every target (`windows`,
-`linux`, `apple` on all ten platforms, `android`), cases for zlib and libpng. Next: SwiftPM, MSBuild and Gradle consumers
-for a few libraries, the
-`basic` case of every library, CI on the build machines (never on pull requests) with the results in the branch
-`status`.
+`linux`, `apple` on all ten platforms, `android`), the MSBuild, SwiftPM and Gradle consumers, cases for zlib and libpng.
+Next: the `basic` case of every library, CI on the build machines (never on pull requests) with the results in the
+branch `status`.
 
 ## License
 

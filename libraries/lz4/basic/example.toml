@@ -1,0 +1,9 @@
+# Compress a buffer with LZ4_compress_default and restore it with LZ4_decompress_safe.
+[example]
+description = "Compress a buffer with LZ4_compress_default and restore it with LZ4_decompress_safe."
+sources = ["main.c"]
+
+[consumer]
+package = "lz4"
+link = ["LZ4::lz4"]
+products = ["LZ4"]

@@ -6,3 +6,6 @@ sources = ["main.c"]
 [consumer]
 package = "PNG"
 link = ["PNG::PNG"]
+products = ["PNG"]
+swift-sources = ["main.swift"]     # the Swift program of the SwiftPM consumer, importing the module PNG
+consumers = ["cmake", "msbuild", "swiftpm", "gradle"]

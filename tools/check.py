@@ -30,6 +30,7 @@ LEVELS = ["failed", "resolved", "installed", "configured", "linked", "ran"]
 TARGETS = ["apple", "android", "windows", "linux"]
 CONSUMED = {"windows", "linux", "apple", "android"}  # targets whose consumers the driver builds so far (README.md, "Status")
 PROFILE = "otok-examples"
+ONLY_TARGET: str | None = None  # the one target of a run with a recipe of --recipe naming {target}
 
 
 @dataclasses.dataclass
@@ -147,10 +148,17 @@ def load_cases(selected: list[str]) -> list[Case]:
     return cases
 
 
-def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, str]) -> str:
+def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, str], excluded: set[str] | None = None) -> str:
     """otok.toml of the case as it is, with what the run adds after it: the profile of the linkage and the recipes of
-    --recipe."""
+    --recipe; without the tables of `excluded` (targets whose recipe has not the linkage) and, with a recipe of --recipe
+    naming {target}, of the other targets."""
     text = case.text if case.text.endswith("\n") else case.text + "\n"
+    tables = list(case.tables())
+    # a recipe of --recipe is one target's: the other tables, which this machine may build too, leave the copy
+    dropped = (excluded or set()) | ({t for t in tables if t != ONLY_TARGET} if ONLY_TARGET else set())
+    for target in dropped:
+        text = re.sub(r"^\[" + target + r"\]\n(?:(?!\[).*\n|\n)*", "", text, flags=re.M)
+    tables = [t for t in tables if t not in dropped]
     added = []
     for library, directory in local_recipes.items():
         recipe = "{ path = " + toml_string(Path(directory).resolve().as_posix()) + " }"
@@ -164,7 +172,7 @@ def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, s
         else:
             added.append(f"[deps.{library}]\nrecipe = {recipe}\n")
     if linkage:
-        added.append(f"[profile.{PROFILE}]\n" + "".join(f"{t} = {{ linkage = {toml_string(linkage)} }}\n" for t in case.tables()))
+        added.append(f"[profile.{PROFILE}]\n" + "".join(f"{t} = {{ linkage = {toml_string(linkage)} }}\n" for t in tables))
     if added:
         text += "\n# Added by tools/check.py for this run.\n" + "\n".join(added)
     return text
@@ -199,19 +207,29 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
     project.mkdir(parents=True, exist_ok=True)
     log = project / "check.log"
     log.write_text("", encoding="utf-8")
-    write_if_changed(project / "otok.toml", project_manifest(case, linkage, local_recipes))
     profile = ["--profile", PROFILE] if linkage else []
+    unsupported: list[Run] = []
 
     def whole(status: str, level: str, message: str) -> list[Run]:
-        return [Run(case.id, label, "", level, status, {}, message, str(log), round(time.monotonic() - started, 1))]
+        return unsupported + [Run(case.id, label, "", level, status, {}, message, str(log), round(time.monotonic() - started, 1))]
 
-    # resolve: the lock, compared with that of the last passing run
-    resolved = tools.run([tools.otok, "update", "--no-build", *profile], project, log)
-    if resolved.returncode != 0:
-        refused = re.search(r"cannot be built as (static|dynamic) libraries", resolved.stdout)
-        if refused and f"[deps.{case.library}]" in resolved.stdout:
-            return whole("unsupported", "failed", f"the recipe of {case.library} builds no {refused.group(1)} libraries for a target of the case")
-        return whole("failed", "failed", "otok update --no-build failed")
+    # resolve: the lock, compared with that of the last passing run. A target whose recipe has not the linkage is
+    # "unsupported" and leaves the copy; the others are checked.
+    excluded: set[str] = set()
+    while True:
+        write_if_changed(project / "otok.toml", project_manifest(case, linkage, local_recipes, excluded))
+        resolved = tools.run([tools.otok, "update", "--no-build", *profile], project, log)
+        if resolved.returncode == 0:
+            break
+        refused = re.search(r"cannot be built as (static|dynamic) libraries for '([^']+)'", resolved.stdout)
+        target = target_of_platform(refused.group(2)) if refused else None
+        if not refused or f"[deps.{case.library}]" not in resolved.stdout or not target or target in excluded:
+            return whole("failed", "failed", "otok update --no-build failed")
+        excluded.add(target)
+        unsupported.append(Run(case.id, label, target, "failed", "unsupported", {},
+                               f"the recipe of {case.library} builds no {refused.group(1)} libraries for {target}", str(log)))
+        if not [t for t in case.tables() if t not in excluded]:
+            return unsupported
     lock = (project / "otok.lock").read_text(encoding="utf-8")
     stored = status_dir / "locks" / case.library / case.name / f"{label}.lock" if status_dir else None
     if changed_only and stored and stored.exists() and stored.read_text(encoding="utf-8") == lock:
@@ -226,9 +244,9 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
                               encoding="utf-8", errors="replace")
     tables = {t["name"]: t for t in json.loads(metadata.stdout)["targets"]} if metadata.returncode == 0 else {}
 
-    runs = []
+    runs = list(unsupported)
     for target in case.tables():
-        if target not in targets:
+        if target not in targets or target in excluded:
             continue
         run = Run(case.id, label, target, "installed", "failed", log=str(log))
         runs.append(run)
@@ -244,10 +262,17 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
         check_consumer(tools, case, project / f"consumer-{target}", target, tables[target], run, log)
     for run in runs:
         run.seconds = round(time.monotonic() - started, 1)
-    if stored and runs and all(r.status in ("passed", "skipped") for r in runs) and any(r.status == "passed" for r in runs):
+    if stored and runs and all(r.status in ("passed", "skipped", "unsupported") for r in runs) and any(r.status == "passed" for r in runs):
         stored.parent.mkdir(parents=True, exist_ok=True)
         stored.write_text(lock, encoding="utf-8", newline="\n")
     return runs or whole("skipped", "installed", "none of the case's target tables is one this machine builds")
+
+
+def target_of_platform(name: str) -> str | None:
+    """The target of a platform as otok names it ('iossim' is Apple's)."""
+    if name in ("android", "windows", "linux"):
+        return name
+    return "apple" if name in APPLE_PLATFORMS or name == "catalyst" else None
 
 
 # Apple's platforms in CMake: CMAKE_SYSTEM_NAME, the SDK, the deployment key of otok.toml and the simulator's runtime
@@ -317,9 +342,18 @@ def check_consumer(tools: Tools, case: Case, base: Path, target: str, table: dic
                 runs = arch == machine_arch()
                 record(f"{arch}/{c}", "ran" if runs else "linked",
                        build_and_run(build, c, build / c.capitalize() / f"example{exe}", runs) if configured else "installed")
+        if "msbuild" in consumers(case):
+            check_msbuild(tools, case, base.parent / "msbuild-windows", output, table, configurations, arguments, expect, log, record)
     elif target == "android":
         check_android(tools, base, source, provider, output, table, configurations, arguments, expect, table.get("linkage", "static"),
                       log, record)
+        if "gradle" in consumers(case):
+            check_gradle(tools, case, base.parent / "gradle-android", source / "example.cmake", provider, output, table, configurations,
+                         expect, table.get("linkage", "static"), log, record)
+        if tools.android.problem:
+            # an emulator that would have run the programs, but did not come up: a failure, not a run that only links
+            record("emulator", "ran", "installed")
+            run.message = tools.android.problem
     elif target == "apple":
         # one build per platform with all its architectures: the program runs the machine's slice, on macOS itself and on
         # a simulator through simctl; a device's, or one without the machine's architecture, only links
@@ -348,6 +382,8 @@ def check_consumer(tools: Tools, case: Case, base: Path, target: str, table: dic
             for c in configurations:
                 record(f"{p}/{c}", "ran" if runnable else "linked",
                        build_and_run(build, c, program, runnable, launcher) if configure(build, extra) else "installed")
+        if "swiftpm" in consumers(case) and "macosx" in table["platforms"]:
+            check_swiftpm(tools, case, base.parent / "swiftpm-apple", output, table, arguments, expect, log, record)
     else:
         for c in configurations:
             build = base / c
@@ -361,6 +397,191 @@ def check_consumer(tools: Tools, case: Case, base: Path, target: str, table: dic
     else:
         problem = f"{', '.join(short)}: stopped at {run.configurations[short[0]]}" if short else "nothing was built"
         run.message = problem + ("; " + run.message if run.message else "")
+
+
+def consumers(case: Case) -> list[str]:
+    """The consumers a case is built with: CMake always; MSBuild, SwiftPM and Gradle for the cases that ask for them."""
+    return case.example.get("consumer", {}).get("consumers", ["cmake"])
+
+
+def products(case: Case) -> list[str]:
+    """The products of otok.toml's libraries the program links, for the consumers that name products."""
+    found = case.example.get("consumer", {}).get("products")
+    if not found:
+        sys.exit(f"{case.id}: [consumer] 'products' is needed by the consumers {consumers(case)}")
+    return found
+
+
+def find_msbuild() -> str | None:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+    if not vswhere.exists():
+        return None
+    found = subprocess.run([str(vswhere), "-latest", "-products", "*", "-find", r"MSBuild\**\Bin\MSBuild.exe"], stdout=subprocess.PIPE, text=True)
+    lines = found.stdout.splitlines()
+    return lines[0] if lines else None
+
+
+def check_msbuild(tools: Tools, case: Case, build: Path, output: Path, table: dict, configurations: list, arguments: list, expect: str,
+                  log: Path, record) -> None:
+    """A project of Visual Studio importing otok.props and otok.targets (consumers/msbuild), built by MSBuild for each
+    architecture and configuration; the machine's architecture runs, with the DLLs OtokCopyDlls put beside it."""
+    from xml.sax.saxutils import escape
+    msbuild = find_msbuild()
+    shutil.rmtree(build, ignore_errors=True)
+    build.mkdir(parents=True)
+    example = case.example.get("example", {})
+    sources = [case.directory / s for s in example.get("sources", [])] or sorted(
+        p for p in case.directory.iterdir() if p.suffix in (".c", ".cpp", ".cc", ".cxx"))
+    text = (ROOT / "consumers/msbuild/example.vcxproj.in").read_text(encoding="utf-8")
+    text = text.replace("@OUTPUT@", escape(str(output).replace("/", "\\") + "\\")).replace("@PRODUCTS@", escape(";".join(products(case))))
+    text = text.replace("@SOURCES@", "\n".join(f'    <ClCompile Include="{escape(str(s))}" />' for s in sources))
+    project = build / "example.vcxproj"
+    project.write_text(text, encoding="utf-8", newline="\r\n")
+    for arch in table["architectures"].get("windows", ["x86_64"]):
+        msbuild_platform = "ARM64" if arch == "arm64" else "x64"
+        for c in configurations:
+            key = f"msbuild/{arch}/{c}"
+            runs = arch == machine_arch()
+            if not msbuild:
+                record(key, "linked", "installed")
+                continue
+            built = tools.run([msbuild, project, "/nologo", "/v:minimal", f"/p:Configuration={c.capitalize()}", f"/p:Platform={msbuild_platform}"],
+                              build, log)
+            if built.returncode != 0:
+                record(key, "ran" if runs else "linked", "configured")
+                continue
+            if not runs:
+                record(key, "linked", "linked")
+                continue
+            program = build / "out" / msbuild_platform / c.capitalize() / "example.exe"
+            result = tools.run([program, *arguments], program.parent, log, env=clean_run_environment())
+            last = result.stdout.strip().splitlines()[-1:] if result.stdout.strip() else []
+            record(key, "ran", "ran" if result.returncode == 0 and last == [expect] else "linked")
+
+
+def check_swiftpm(tools: Tools, case: Case, build: Path, output: Path, table: dict, arguments: list, expect: str, log: Path,
+                  record) -> None:
+    """A package depending on Package.swift of the output (otok-toml.md 4), built by `swift build` for macOS: the case's
+    C program as an executable target, and its Swift program (swift-sources) importing the products' modules."""
+    shutil.rmtree(build, ignore_errors=True)
+    example = case.example.get("example", {})
+    consumer = case.example.get("consumer", {})
+    sources = [case.directory / s for s in example.get("sources", [])] or sorted(
+        p for p in case.directory.iterdir() if p.suffix in (".c", ".cpp", ".cc", ".cxx"))
+    targets = {"example": sources}
+    if consumer.get("swift-sources"):
+        targets["example-swift"] = [case.directory / s for s in consumer["swift-sources"]]
+    for name, files in targets.items():
+        (build / "Sources" / name).mkdir(parents=True)
+        for f in files:
+            shutil.copyfile(f, build / "Sources" / name / f.name)
+    identity = output.name  # a package of a path is known by its directory's name
+    dependencies = ", ".join(f'.product(name: "{p}", package: "{identity}")' for p in products(case))
+    macos = table.get("deployment", {}).get("macos", "12.0")
+    executables = "".join(f'        .executableTarget(name: "{name}", dependencies: [{dependencies}]),\n' for name in targets)
+    (build / "Package.swift").write_text(
+        "// swift-tools-version:5.9\n// Generated by otok-dev/examples tools/check.py; do not edit.\n\nimport PackageDescription\n\n"
+        f'let package = Package(\n    name: "Example",\n    platforms: [.macOS("{macos}")],\n'
+        f'    dependencies: [.package(path: "{output.as_posix()}")],\n    targets: [\n{executables}    ]\n)\n',
+        encoding="utf-8", newline="\n")
+    built = tools.run(["xcrun", "swift", "build", "-c", "release", "--package-path", build], build, log)
+    for name in targets:
+        key = f"swiftpm/{name}"
+        if built.returncode != 0:
+            record(key, "ran", "configured")
+            continue
+        program = build / ".build" / "release" / name
+        result = tools.run([program, *arguments], build, log, env=clean_run_environment())
+        last = result.stdout.strip().splitlines()[-1:] if result.stdout.strip() else []
+        record(key, "ran", "ran" if result.returncode == 0 and last == [expect] else "linked")
+
+
+def find_java_home(sdk: Path | None) -> str | None:
+    """JAVA_HOME, or the JetBrains runtime of Android Studio beside the SDK (its usual places)."""
+    if os.environ.get("JAVA_HOME"):
+        return os.environ["JAVA_HOME"]
+    candidates = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Android" / "Android Studio" / "jbr",
+                  Path("/Applications/Android Studio.app/Contents/jbr/Contents/Home")]
+    if sdk:
+        candidates.insert(0, sdk.parent / "Android Studio" / "jbr")
+    return next((str(c) for c in candidates if c.is_dir()), None)
+
+
+def check_gradle(tools: Tools, case: Case, build: Path, source_settings: Path, provider: str, output: Path, table: dict,
+                 configurations: list, expect: str, linkage: str, log: Path, record) -> None:
+    """The Android app of consumers/gradle, built by Gradle in debug and release: the native library of each ABI in the
+    APK, with the shared objects of the output it loads and libc++_shared.so when the libraries are dynamic; the app
+    run on the emulator's ABIs, its output read from the log."""
+    import zipfile
+    shutil.rmtree(build, ignore_errors=True)
+    shutil.copytree(ROOT / "consumers" / "gradle", build)
+    device = tools.android
+    ndk = (table.get("toolchain") or {}).get("ndk", "")
+    cmake_dir = Path(tools.cmake).parent.parent  # Gradle's CMake: the one of the run, Ninja from PATH
+    abis = table["architectures"].get("android", [])
+    arguments = [f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={provider}", f"-DEXAMPLE_SETTINGS={source_settings.as_posix()}"]
+    if linkage == "dynamic":
+        arguments.append("-DANDROID_STL=c++_shared")
+    (build / "local.properties").write_text(
+        f"sdk.dir={str(device.sdk).replace(chr(92), '/') if device.sdk else ''}\ncmake.dir={cmake_dir.as_posix()}\n", encoding="utf-8")
+    with open(build / "gradle.properties", "a", encoding="utf-8") as f:
+        f.write(f"otokNdk={Path(ndk).as_posix()}\notokNdkVersion={(table.get('toolchain') or {}).get('revision', '')}\notokMinSdk={table.get('deployment', {}).get('android', '24')}\n"
+                f"otokAbis={','.join(abis)}\notokCmakeArgs={';'.join(arguments)}\n")
+    env = dict(tools.env)
+    java = find_java_home(device.sdk)
+    if java:
+        env["JAVA_HOME"] = java
+    gradlew = build / ("gradlew.bat" if platform.system() == "Windows" else "gradlew")
+    if platform.system() != "Windows":
+        gradlew.chmod(0o755)
+    tasks = [f"assemble{c.capitalize()}" for c in configurations]
+    built = tools.run([gradlew, "--no-daemon", "--console=plain", *tasks], build, log, env=env)
+    runs_on = device.abis if device.prepare(log) else []
+    for c in configurations:
+        apk = build / "app" / "build" / "outputs" / "apk" / c / f"app-{c}.apk"
+        names = set(zipfile.ZipFile(apk).namelist()) if built.returncode == 0 and apk.exists() else set()
+        lib = "debug/lib" if c == "debug" else "lib"
+        for abi in abis:
+            key = f"gradle/{abi}/{c}"
+            runnable = abi in runs_on
+            # what the APK must carry: the app's library, the output's shared objects, the C++ runtime they use
+            wanted = {f"lib/{abi}/libexample.so"} | {f"lib/{abi}/{p.name}" for p in output.glob(f"*/{lib}/{abi}/*.so")}
+            if linkage == "dynamic":
+                wanted.add(f"lib/{abi}/libc++_shared.so")
+            if not names or not wanted <= names:
+                if names:
+                    with open(log, "a", encoding="utf-8") as out:
+                        out.write(f"{apk.name} lacks for {abi}: {', '.join(sorted(wanted - names))}\n")
+                record(key, "ran" if runnable else "linked", "configured")
+                continue
+            if not runnable:
+                record(key, "linked", "linked")
+                continue
+            record(key, "ran", run_apk(tools, device, apk, abi, expect, log))
+
+
+def run_apk(tools: Tools, device: AndroidDevice, apk: Path, abi: str, expect: str, log: Path) -> str:
+    """Installs the app for the ABI, starts its NativeActivity and reads what glue.c logs."""
+    adb = [device.adb(), "-s", device.serial]
+    tools.run([*adb, "uninstall", "org.otok.example"], ROOT, log)
+    if tools.run([*adb, "install", "-r", "--abi", abi, apk], ROOT, log).returncode != 0:
+        return "linked"
+    tools.run([*adb, "logcat", "-c"], ROOT, log)
+    tools.run([*adb, "shell", "am", "start", "-W", "-n", "org.otok.example/android.app.NativeActivity"], ROOT, log)
+    lines: list[str] = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        logged = subprocess.run([*adb, "logcat", "-d", "-v", "raw", "-s", "otok-example:I"], stdout=subprocess.PIPE, text=True,
+                                encoding="utf-8", errors="replace").stdout
+        lines = [line for line in logged.splitlines() if line and not line.startswith("-")]
+        if any(line.startswith("exit=") for line in lines):
+            break
+        time.sleep(1)
+    with open(log, "a", encoding="utf-8") as out:
+        out.write("logged by the app:\n" + "".join(f"  {line}\n" for line in lines))
+    tools.run([*adb, "uninstall", "org.otok.example"], ROOT, log)
+    output = [line for line in lines if not line.startswith("exit=")]
+    return "ran" if "exit=0" in lines and output[-1:] == [expect] else "linked"
 
 
 def check_catalyst(tools: Tools, build: Path, source: Path, provider: str, table: dict, arguments: list, expect: str, log: Path) -> str:
@@ -459,6 +680,7 @@ class AndroidDevice:
         self.abis: list[str] = []
         self.started: subprocess.Popen | None = None
         self.tried = False
+        self.problem = ""  # an emulator there, but not usable: what runs on it fails instead of only linking
 
     def adb(self) -> str:
         return str(self.sdk / "platform-tools" / ("adb.exe" if platform.system() == "Windows" else "adb")) if self.sdk else "adb"
@@ -487,6 +709,7 @@ class AndroidDevice:
                 time.sleep(2)
                 serials = self._devices()
             if not serials:
+                self.problem = f"the emulator {avd} did not come up for adb (an image of Google Play may ask to authorize adb on its screen)"
                 return False
         self.serial = serials[0]
         deadline = time.monotonic() + 300
@@ -495,6 +718,10 @@ class AndroidDevice:
             if booted == "1":
                 break
             time.sleep(2)
+        else:
+            self.problem = f"{self.serial} did not finish booting"
+            self.serial = None
+            return False
         self.abis = self._shell("getprop ro.product.cpu.abilist").stdout.strip().split(",")
         # an emulator translating ARM (native bridge) runs those programs in a namespace of its own, which takes no
         # LD_LIBRARY_PATH: the ABIs of its own processor alone run, the translated ones only link
@@ -620,6 +847,8 @@ def main() -> int:
             if not args.target or len(args.target) != 1:
                 parser.error(f"--recipe {item}: {{target}} needs exactly one --target")
             directory = directory.replace("{target}", args.target[0])
+            global ONLY_TARGET
+            ONLY_TARGET = args.target[0]
         local_recipes[library] = directory
 
     tools = Tools(args)

@@ -1,0 +1,9 @@
+# Compress a buffer with ZSTD_compress and restore it with ZSTD_decompress.
+[example]
+description = "Compress a buffer with ZSTD_compress and restore it with ZSTD_decompress."
+sources = ["main.c"]
+
+[consumer]
+package = "zstd"
+link = ["zstd::libzstd"]
+products = ["Zstd"]

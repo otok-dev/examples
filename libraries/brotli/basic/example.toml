@@ -1,0 +1,9 @@
+# Compress a buffer with BrotliEncoderCompress and restore it with BrotliDecoderDecompress.
+[example]
+description = "Compress a buffer with BrotliEncoderCompress and restore it with BrotliDecoderDecompress."
+sources = ["main.c"]
+
+[consumer]
+# the recipe gives no CMake package: otok's own targets
+link = ["otok::Brotli"]
+products = ["Brotli"]

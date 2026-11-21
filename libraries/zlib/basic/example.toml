@@ -6,3 +6,5 @@ sources = ["main.c"]
 [consumer]
 package = "ZLIB"
 link = ["ZLIB::ZLIB"]
+products = ["ZLIB"]
+consumers = ["cmake", "msbuild"]

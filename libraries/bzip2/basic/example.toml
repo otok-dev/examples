@@ -1,0 +1,9 @@
+# Compress a buffer with BZ2_bzBuffToBuffCompress and restore it.
+[example]
+description = "Compress a buffer with BZ2_bzBuffToBuffCompress and restore it."
+sources = ["main.c"]
+
+[consumer]
+package = "BZip2"
+link = ["BZip2::BZip2"]
+products = ["BZip2"]

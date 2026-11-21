@@ -1,0 +1,9 @@
+# Compress a buffer to the .xz format with lzma_easy_buffer_encode and restore it.
+[example]
+description = "Compress a buffer to the .xz format with lzma_easy_buffer_encode and restore it."
+sources = ["main.c"]
+
+[consumer]
+package = "LibLZMA"
+link = ["LibLZMA::LibLZMA"]
+products = ["LZMA"]

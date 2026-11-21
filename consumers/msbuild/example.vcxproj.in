@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Otok examples (c) Alexander A Pototskiy
+     SPDX-License-Identifier: 0BSD
+
+     The MSBuild consumer of the examples: a project of Visual Studio without CMake, which takes the libraries through
+     otok.props and otok.targets of the output (otok-toml.md 4.11). tools/check.py fills in @OUTPUT@ (the output with a
+     trailing backslash), @PRODUCTS@ (the case's products) and @SOURCES@. -->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64"><Configuration>Debug</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64"><Configuration>Release</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{4F6B1E2A-6C1D-4E0B-9C61-0B7E5D2A9F31}</ProjectGuid>
+    <RootNamespace>example</RootNamespace>
+  </PropertyGroup>
+  <!-- before the project's settings: the include and library directories of the output -->
+  <Import Project="@OUTPUT@otok.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <UseDebugLibraries Condition="'$(Configuration)' == 'Debug'">true</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)out\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)obj\$(Platform)\$(Configuration)\</IntDir>
+    <!-- what the program links: products of otok.toml's libraries -->
+    <OtokProducts>@PRODUCTS@</OtokProducts>
+  </PropertyGroup>
+  <ItemGroup>
+@SOURCES@
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- after them: the products' libraries and defines, the checks, the DLLs beside the program -->
+  <Import Project="@OUTPUT@otok.targets" />
+</Project>
