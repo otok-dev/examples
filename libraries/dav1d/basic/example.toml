@@ -1,0 +1,9 @@
+# Decode one AV1 frame held in the program and check its size and luma.
+[example]
+description = "Decode one AV1 frame held in the program and check its size and luma."
+sources = ["main.c"]
+
+[consumer]
+# the recipe gives no CMake package: otok's own targets
+link = ["otok::Dav1d"]
+products = ["Dav1d"]

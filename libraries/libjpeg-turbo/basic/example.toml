@@ -1,0 +1,9 @@
+# Compress a small RGB image to JPEG in memory with the libjpeg API and decompress it again.
+[example]
+description = "Compress a small RGB image to JPEG in memory with the libjpeg API and decompress it again."
+sources = ["main.c"]
+
+[consumer]
+package = "JPEG"
+link = ["JPEG::JPEG"]
+products = ["JPEG"]

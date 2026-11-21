@@ -1,0 +1,9 @@
+# Write a Deflate-compressed RGB TIFF in memory through TIFFClientOpen and read it back: libtiff and its zlib.
+[example]
+description = "Write a Deflate-compressed RGB TIFF in memory through TIFFClientOpen and read it back: libtiff and its zlib."
+sources = ["main.c"]
+
+[consumer]
+package = "TIFF"
+link = ["TIFF::TIFF"]
+products = ["TIFF"]

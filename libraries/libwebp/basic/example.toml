@@ -1,0 +1,9 @@
+# Encode a small RGBA image to lossless WebP and decode it again, pixel for pixel.
+[example]
+description = "Encode a small RGBA image to lossless WebP and decode it again, pixel for pixel."
+sources = ["main.c"]
+
+[consumer]
+package = "WebP"
+link = ["WebP::webp"]
+products = ["WebP"]

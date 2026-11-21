@@ -1,0 +1,9 @@
+# Decode a small AVIF image held in the program to RGB: libavif and its AV1 decoder dav1d.
+[example]
+description = "Decode a small AVIF image held in the program to RGB: libavif and its AV1 decoder dav1d."
+sources = ["main.c"]
+
+[consumer]
+package = "libavif"
+link = ["libavif::avif"]
+products = ["AVIF"]

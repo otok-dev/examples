@@ -103,9 +103,10 @@ leaving them linked only; its data partition must have room for the app.
 ## Status
 
 Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for every target (`windows`,
-`linux`, `apple` on all ten platforms, `android`), the MSBuild, SwiftPM and Gradle consumers, cases for zlib and libpng.
-Next: the `basic` case of every library, CI on the build machines (never on pull requests) with the results in the
-branch `status`.
+`linux`, `apple` on all ten platforms, `android`), the MSBuild, SwiftPM and Gradle consumers. `basic` cases so far:
+zlib, libpng; compression: bzip2, lz4, lzma, zstd, brotli; images: libjpeg-turbo, giflib, libwebp, libtiff, openjpeg,
+libavif, dav1d. Next: the `basic` case of every other library, CI on the build machines (never on pull requests) with
+the results in the branch `status`.
 
 ## License
 

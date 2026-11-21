@@ -1,0 +1,9 @@
+# Write a small four-colour GIF in memory with EGifOpen and read it back with DGifSlurp.
+[example]
+description = "Write a small four-colour GIF in memory with EGifOpen and read it back with DGifSlurp."
+sources = ["main.c"]
+
+[consumer]
+package = "GIF"
+link = ["GIF::GIF"]
+products = ["GIF"]

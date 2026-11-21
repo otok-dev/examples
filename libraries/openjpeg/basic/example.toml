@@ -1,0 +1,9 @@
+# Encode a small RGB image to a lossless JPEG 2000 codestream in memory and decode it again, sample for sample.
+[example]
+description = "Encode a small RGB image to a lossless JPEG 2000 codestream in memory and decode it again, sample for sample."
+sources = ["main.c"]
+
+[consumer]
+package = "OpenJPEG"
+link = ["OpenJPEG::openjp2"]
+products = ["OpenJPEG"]
