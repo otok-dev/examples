@@ -1,0 +1,37 @@
+# libcurl with its option psl (the Public Suffix List through libpsl), libpsl static whatever the linkage of the target
+# tables: a dynamic libcurl holds it, and the build of curl needs the define of libpsl's product (PSL_STATIC on Windows,
+# otok decision 139). Built for every Apple platform, every Android ABI, Windows (MSVC) and Linux (GCC); Android,
+# Windows and Linux in both configurations. Each target in an output of its own. tools/check.py selects the profile
+# otok-examples and adds the linkage of the target tables to it.
+[otok]
+format = 1
+
+[apple]
+platforms = ["macosx", "catalyst", "ios", "iossim", "tvos", "tvossim", "watchos", "watchossim", "xros", "xrossim"]
+deployment = { macos = "12.0", ios = "15.0", tvos = "15.0", watchos = "8.0", visionos = "1.0" }
+# Apple Watch's arm64 exists only from watchOS 26: below it, arm64_32 alone
+architectures = { watchos = ["arm64_32"] }
+output = "Otok/apple"
+
+[android]
+deployment = { android = "24" }
+configurations = ["debug", "release"]
+output = "Otok/android"
+
+[windows]
+build-on = ["windows/msvc"]
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[linux]
+build-on = ["linux/gcc"]
+configurations = ["debug", "release"]
+output = "Otok/linux"
+
+[deps.curl]
+recipe = "apotocki/curl"
+version = "~> 8.23"
+options = { psl = true }
+
+[profile.otok-examples.deps.libpsl]
+linkage = "static"

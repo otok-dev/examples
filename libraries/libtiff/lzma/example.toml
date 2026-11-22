@@ -1,0 +1,10 @@
+# libtiff with LZMA2 compression, liblzma static (otok decision 139).
+[example]
+description = "Write an LZMA-compressed RGB TIFF in memory and read it back: libtiff with a static liblzma, inside libtiff when it is dynamic."
+issue = "https://github.com/otok-dev/otok, docs/PLAN.md decision 139"
+sources = ["main.c"]
+
+[consumer]
+package = "TIFF"
+link = ["TIFF::TIFF"]
+products = ["TIFF"]

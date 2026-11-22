@@ -1,0 +1,37 @@
+# libtiff with its option lzma (LZMA2 compression through liblzma), and liblzma static whatever the linkage of the target
+# tables: a dynamic libtiff holds it, and its build needs the define of lzma's product (LZMA_API_STATIC on Windows,
+# otok decision 139). Built for every Apple platform, every Android ABI, Windows (MSVC) and Linux (GCC); Android,
+# Windows and Linux in both configurations. Each target in an output of its own. tools/check.py selects the profile
+# otok-examples and adds the linkage of the target tables to it.
+[otok]
+format = 1
+
+[apple]
+platforms = ["macosx", "catalyst", "ios", "iossim", "tvos", "tvossim", "watchos", "watchossim", "xros", "xrossim"]
+deployment = { macos = "12.0", ios = "15.0", tvos = "15.0", watchos = "8.0", visionos = "1.0" }
+# Apple Watch's arm64 exists only from watchOS 26: below it, arm64_32 alone
+architectures = { watchos = ["arm64_32"] }
+output = "Otok/apple"
+
+[android]
+deployment = { android = "24" }
+configurations = ["debug", "release"]
+output = "Otok/android"
+
+[windows]
+build-on = ["windows/msvc"]
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[linux]
+build-on = ["linux/gcc"]
+configurations = ["debug", "release"]
+output = "Otok/linux"
+
+[deps.libtiff]
+recipe = "apotocki/libtiff"
+version = "~> 4.7"
+options = { lzma = true }
+
+[profile.otok-examples.deps.lzma]
+linkage = "static"

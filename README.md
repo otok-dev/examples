@@ -105,8 +105,11 @@ leaving them linked only; its data partition must have room for the app.
 Started 2026-11-20 (decisions 131 to 134 of otok's plan): the driver and the CMake consumer for every target (`windows`,
 `linux`, `apple` on all ten platforms, `android`), the MSBuild, SwiftPM and Gradle consumers. `basic` cases so far:
 zlib, libpng; compression: bzip2, lz4, lzma, zstd, brotli; images: libjpeg-turbo, giflib, libwebp, libtiff, openjpeg,
-libavif, dav1d. Next: the `basic` case of every other library, CI on the build machines (never on pull requests) with
-the results in the branch `status`.
+libavif, dav1d; networking (2026-11-21): openssl, mbedtls, nghttp2, nghttp3, ngtcp2, libssh2, libpsl, libidn2, curl.
+Regression cases: `libpng/static-zlib` (a dynamic libpng holding a static zlib, otok decisions 136 and 137),
+`libtiff/lzma` and `curl/psl` (a static dependency whose product has a define its dependent's build needs, decision
+139). Next: the `basic` case of every other library, CI on the build machines (never on pull requests) with the results
+in the branch `status`.
 
 ## License
 

@@ -1,0 +1,10 @@
+# libcurl with the Public Suffix List, libpsl static (otok decision 139).
+[example]
+description = "Initialize libcurl with libpsl and ask it for libpsl's version: curl's code calls libpsl, static, inside libcurl when it is dynamic."
+issue = "https://github.com/otok-dev/otok, docs/PLAN.md decision 139"
+sources = ["main.c"]
+
+[consumer]
+package = "CURL"
+link = ["CURL::libcurl"]
+products = ["CURL"]
