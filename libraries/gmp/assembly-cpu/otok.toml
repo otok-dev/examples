@@ -1,0 +1,16 @@
+# GMP with the assembly of one CPU (the option assembly = "haswell": mulx of BMI2, which no CPU before Haswell runs) and
+# its temporary memory from the heap alone (alloca = "malloc-reentrant"). Windows (MSVC) on x86_64, in both
+# configurations.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+architectures = { windows = ["x86_64"] }
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[deps.gmp]
+recipe = "apotocki/gmp"
+version = "~> 6.3"
+options = { assembly = "haswell", alloca = "malloc-reentrant" }

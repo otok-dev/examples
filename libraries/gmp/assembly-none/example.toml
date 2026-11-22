@@ -1,0 +1,9 @@
+# The options assembly and cxx of the recipe of GMP (gmp/6.3/windows r3).
+[example]
+description = "GMP's C code without assembly and without gmpxx: a Mersenne prime, 1000! and a large square from C."
+sources = ["main.c"]
+
+[consumer]
+link = ["otok::GMP"]
+products = ["GMP"]
+consumers = ["cmake", "msbuild"]

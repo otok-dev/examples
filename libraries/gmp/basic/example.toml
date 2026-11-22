@@ -1,0 +1,9 @@
+# Big numbers through GMP's C functions and gmpxx's classes.
+[example]
+description = "A Mersenne prime, 1000!, a large square through GMP's C functions, and the same arithmetic with gmpxx's mpz_class."
+sources = ["main.cpp"]
+
+[consumer]
+link = ["otok::GMP", "otok::GMPXX"]
+products = ["GMP", "GMPXX"]
+consumers = ["cmake", "msbuild"]

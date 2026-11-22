@@ -166,7 +166,8 @@ def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, s
         deps = case.manifest.get("deps", {})
         if library in deps:
             # the line of its recipe in the case's own table, which a profile cannot change (otok-toml.md 8)
-            pattern = re.compile(r"(\[deps\." + re.escape(library) + r"\][^\[]*?)^recipe\s*=.*$\n(?:^version\s*=.*$\n)?", re.M | re.S)
+            # the lines alone ([^\n]*): the keys after them (options, linkage) stay
+            pattern = re.compile(r"(\[deps\." + re.escape(library) + r"\][^\[]*?)^recipe\s*=[^\n]*\n(?:^version\s*=[^\n]*\n)?", re.M)
             text, n = pattern.subn(lambda m: m.group(1) + f"recipe = {recipe}\n", text, count=1)
             if n != 1:
                 sys.exit(f"{case.id}: cannot replace the recipe of [deps.{library}] in otok.toml for --recipe")

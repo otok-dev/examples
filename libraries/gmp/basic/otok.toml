@@ -1,0 +1,14 @@
+# GMP as its recipe builds it by default: a fat library, which takes the assembly of the CPU it runs on, with gmpxx, the
+# C++ class interface. Windows (MSVC) on x86_64, in both configurations; the recipe builds no other target yet.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+architectures = { windows = ["x86_64"] }
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[deps.gmp]
+recipe = "apotocki/gmp"
+version = "~> 6.3"

@@ -1,0 +1,9 @@
+# The options assembly and alloca of the recipe of GMP (gmp/6.3/windows r3). The program runs on Haswell and later CPUs.
+[example]
+description = "GMP with the assembly of Haswell and its temporary memory from the heap: big numbers through its C functions and gmpxx."
+sources = ["main.cpp"]
+
+[consumer]
+link = ["otok::GMP", "otok::GMPXX"]
+products = ["GMP", "GMPXX"]
+consumers = ["cmake", "msbuild"]

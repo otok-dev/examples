@@ -1,0 +1,15 @@
+# GMP without assembly, its C code only (the option assembly = "none"), and without gmpxx (cxx = false): the build that
+# runs on any CPU, and a library of C alone. Windows (MSVC) on x86_64, in both configurations.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+architectures = { windows = ["x86_64"] }
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[deps.gmp]
+recipe = "apotocki/gmp"
+version = "~> 6.3"
+options = { assembly = "none", cxx = false }
