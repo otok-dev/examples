@@ -225,7 +225,7 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
         return bool([t for t in case.tables() if t not in excluded and (not ONLY_TARGETS or t in ONLY_TARGETS)])
 
     # resolve: the lock, compared with that of the last passing run. The linkage of the target tables is a preference
-    # (otok-toml.md 5, docs/PLAN.md decision 136): a recipe without it builds the other; a linkage the case's otok.toml
+    # (otok-toml.md 5, otok 0.5.29): a recipe without it builds the other; a linkage the case's otok.toml
     # chooses for a library is still refused, and its target is "unsupported" and leaves the copy.
     # The recipes of --recipe: of the case's library and of its [deps] at once; the others only once the lock shows them
     # in the case's graph, which a [deps] entry added for nothing would change (a second holder of a static library)

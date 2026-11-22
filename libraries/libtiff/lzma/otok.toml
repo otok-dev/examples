@@ -1,8 +1,8 @@
 # libtiff with its option lzma (LZMA2 compression through liblzma), and liblzma static whatever the linkage of the target
 # tables: a dynamic libtiff holds it, and its build needs the define of lzma's product (LZMA_API_STATIC on Windows,
-# otok decision 139). Built for every Apple platform, every Android ABI, Windows (MSVC) and Linux (GCC); Android,
-# Windows and Linux in both configurations. Each target in an output of its own. tools/check.py selects the profile
-# otok-examples and adds the linkage of the target tables to it.
+# otok 0.5.31, build-lua-api.md 4). Built for every Apple platform, every Android ABI, Windows (MSVC) and Linux
+# (GCC); Android, Windows and Linux in both configurations. Each target in an output of its own. tools/check.py
+# selects the profile otok-examples and adds the linkage of the target tables to it.
 [otok]
 format = 1
 
