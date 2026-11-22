@@ -30,7 +30,7 @@ LEVELS = ["failed", "resolved", "installed", "configured", "linked", "ran"]
 TARGETS = ["apple", "android", "windows", "linux"]
 CONSUMED = {"windows", "linux", "apple", "android"}  # targets whose consumers the driver builds so far (README.md, "Status")
 PROFILE = "otok-examples"
-ONLY_TARGET: str | None = None  # the one target of a run with a recipe of --recipe naming {target}
+ONLY_TARGETS: set[str] = set()  # the targets of --target: the other tables leave the copies of otok.toml
 
 
 @dataclasses.dataclass
@@ -150,12 +150,13 @@ def load_cases(selected: list[str]) -> list[Case]:
 
 def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, str], excluded: set[str] | None = None) -> str:
     """otok.toml of the case as it is, with what the run adds after it: the profile of the linkage and the recipes of
-    --recipe; without the tables of `excluded` (targets whose recipe has not the linkage) and, with a recipe of --recipe
-    naming {target}, of the other targets."""
+    --recipe; without the tables of `excluded` (targets whose recipe has not the linkage) and, with --target, of the other
+    targets."""
     text = case.text if case.text.endswith("\n") else case.text + "\n"
     tables = list(case.tables())
-    # a recipe of --recipe is one target's: the other tables, which this machine may build too, leave the copy
-    dropped = (excluded or set()) | ({t for t in tables if t != ONLY_TARGET} if ONLY_TARGET else set())
+    # the tables of targets not checked leave the copy: this machine would build them for nothing, and a recipe of
+    # --recipe naming {target} is one target's
+    dropped = (excluded or set()) | ({t for t in tables if t not in ONLY_TARGETS} if ONLY_TARGETS else set())
     for target in dropped:
         text = re.sub(r"^\[" + target + r"\]\n(?:(?!\[).*\n|\n)*", "", text, flags=re.M)
     tables = [t for t in tables if t not in dropped]
@@ -172,7 +173,8 @@ def project_manifest(case: Case, linkage: str | None, local_recipes: dict[str, s
         else:
             added.append(f"[deps.{library}]\nrecipe = {recipe}\n")
     if linkage:
-        added.append(f"[profile.{PROFILE}]\n" + "".join(f"{t} = {{ linkage = {toml_string(linkage)} }}\n" for t in tables))
+        # sub-tables: the case may have tables of this profile too (`[profile.otok-examples.deps.zlib]`)
+        added.append("".join(f"[profile.{PROFILE}.{t}]\nlinkage = {toml_string(linkage)}\n" for t in tables))
     if added:
         text += "\n# Added by tools/check.py for this run.\n" + "\n".join(added)
     return text
@@ -207,42 +209,78 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
     project.mkdir(parents=True, exist_ok=True)
     log = project / "check.log"
     log.write_text("", encoding="utf-8")
-    profile = ["--profile", PROFILE] if linkage else []
+    # the profile of the linkage, and that of the case's otok.toml (a profile's `deps.<library>`, otok-toml.md 8)
+    profile = ["--profile", PROFILE] if linkage or PROFILE in case.manifest.get("profile", {}) else []
     unsupported: list[Run] = []
 
     def whole(status: str, level: str, message: str) -> list[Run]:
         return unsupported + [Run(case.id, label, "", level, status, {}, message, str(log), round(time.monotonic() - started, 1))]
 
-    # resolve: the lock, compared with that of the last passing run. A target whose recipe has not the linkage is
-    # "unsupported" and leaves the copy; the others are checked.
+    def exclude(target: str, library: str, kind: str) -> bool:
+        """The target "unsupported": its tables leave the copy. False when nothing else is left to check."""
+        excluded.add(target)
+        whose = library if library == case.library else f"{library} (a dependency of {case.library})"
+        unsupported.append(Run(case.id, label, target, "failed", "unsupported", {},
+                               f"the recipe of {whose} builds no {kind} libraries for {target}", str(log)))
+        return bool([t for t in case.tables() if t not in excluded and (not ONLY_TARGETS or t in ONLY_TARGETS)])
+
+    # resolve: the lock, compared with that of the last passing run. The linkage of the target tables is a preference
+    # (otok-toml.md 5, docs/PLAN.md decision 136): a recipe without it builds the other; a linkage the case's otok.toml
+    # chooses for a library is still refused, and its target is "unsupported" and leaves the copy.
+    # The recipes of --recipe: of the case's library and of its [deps] at once; the others only once the lock shows them
+    # in the case's graph, which a [deps] entry added for nothing would change (a second holder of a static library)
     excluded: set[str] = set()
+    recipes = {l: d for l, d in local_recipes.items() if l == case.library or l in case.manifest.get("deps", {})}
     while True:
-        write_if_changed(project / "otok.toml", project_manifest(case, linkage, local_recipes, excluded))
+        write_if_changed(project / "otok.toml", project_manifest(case, linkage, recipes, excluded))
         resolved = tools.run([tools.otok, "update", "--no-build", *profile], project, log)
         if resolved.returncode == 0:
-            break
-        refused = re.search(r"cannot be built as (static|dynamic) libraries for '([^']+)'", resolved.stdout)
+            graph = set(re.findall(r'^library = "([^"]+)"', (project / "otok.lock").read_text(encoding="utf-8"), re.M))
+            more = {l: d for l, d in local_recipes.items() if l not in recipes and l in graph}
+            if not more:
+                break
+            recipes.update(more)
+            continue
+        refused = re.search(r"cannot be built as (static|dynamic) libraries for '([^']+)'.*?\[deps\.([^\]]+)\]", resolved.stdout)
         target = target_of_platform(refused.group(2)) if refused else None
-        if not refused or f"[deps.{case.library}]" not in resolved.stdout or not target or target in excluded:
+        if not refused or not target or target in excluded:
             return whole("failed", "failed", "otok update --no-build failed")
-        excluded.add(target)
-        unsupported.append(Run(case.id, label, target, "failed", "unsupported", {},
-                               f"the recipe of {case.library} builds no {refused.group(1)} libraries for {target}", str(log)))
-        if not [t for t in case.tables() if t not in excluded]:
+        if not exclude(target, refused.group(3), refused.group(1)):
             return unsupported
     lock = (project / "otok.lock").read_text(encoding="utf-8")
     stored = status_dir / "locks" / case.library / case.name / f"{label}.lock" if status_dir else None
     if changed_only and stored and stored.exists() and stored.read_text(encoding="utf-8") == lock:
         return whole("unchanged", "resolved", "otok.lock is that of the last passing run")
 
-    installed = tools.run([tools.otok, "install", *profile], project, log)
-    if installed.returncode != 0:
-        return whole("failed", "resolved", "otok install failed")
+    # install: a static library falling back inside a dynamic one that the case also names in [deps] is a second copy,
+    # an error of otok (otok-toml.md 5); its target is "unsupported" as the case is written
+    while True:
+        installed = tools.run([tools.otok, "install", *profile], project, log)
+        if installed.returncode == 0:
+            break
+        copies = re.search(r"'([^']+)' is static as the target table falls back \(its recipe builds no (static|dynamic) library for '([^']+)'\)",
+                           installed.stdout)
+        if not copies or copies.group(3) in excluded:
+            return whole("failed", "resolved", "otok install failed")
+        if not exclude(copies.group(3), copies.group(1), copies.group(2)):
+            return unsupported
+        write_if_changed(project / "otok.toml", project_manifest(case, linkage, recipes, excluded))
+    # a dynamic library exporting the static libraries inside it, which otok should have hidden (otok-toml.md 5.2): a
+    # warning of otok install, a failure of the case
+    exported = re.search(r"^warning: (the dynamic library .* exports symbols of the static libraries inside it: [^;]*)", installed.stdout, re.M)
+    if exported:
+        return whole("failed", "installed", exported.group(1))
     skipped = dict(re.findall(r"^note: not building for '([^']+)': (.*)$", installed.stdout, re.M))
-    # the target tables as otok reads them, the profile applied: output, platforms, architectures, configurations
+    # the target tables as otok reads them, the profile applied: output, platforms, architectures, configurations; and the
+    # linkage each library got
     metadata = subprocess.run([tools.otok, "metadata", *profile], cwd=project, env=tools.env, stdout=subprocess.PIPE, text=True,
                               encoding="utf-8", errors="replace")
-    tables = {t["name"]: t for t in json.loads(metadata.stdout)["targets"]} if metadata.returncode == 0 else {}
+    document = json.loads(metadata.stdout) if metadata.returncode == 0 else {}
+    tables = {t["name"]: t for t in document.get("targets", [])}
+    # the case's library in another linkage than the one asked: the example does not check what it says. Its
+    # dependencies falling back are the fallback's purpose, not the case's concern.
+    fallbacks = {o["target"]: (o["linkage"], o["linkage-fallback"]) for p in document.get("packages", []) if p["library"] == case.library and not p["tool"]
+                 for o in p["outputs"] if o.get("linkage-fallback")}
 
     runs = list(unsupported)
     for target in case.tables():
@@ -252,6 +290,10 @@ def check_case(tools: Tools, case: Case, linkage: str | None, targets: list[str]
         runs.append(run)
         if target in skipped:
             run.status, run.message = "skipped", skipped[target]
+            continue
+        if target in fallbacks:
+            got, why = fallbacks[target]
+            run.status, run.message = "unsupported", f"{case.library} is {got} here: {why}"
             continue
         if target not in CONSUMED:
             run.status, run.message = "skipped", "the driver builds no consumer of this target yet"
@@ -847,10 +889,10 @@ def main() -> int:
             if not args.target or len(args.target) != 1:
                 parser.error(f"--recipe {item}: {{target}} needs exactly one --target")
             directory = directory.replace("{target}", args.target[0])
-            global ONLY_TARGET
-            ONLY_TARGET = args.target[0]
         local_recipes[library] = directory
 
+    global ONLY_TARGETS
+    ONLY_TARGETS = set(args.target or [])
     tools = Tools(args)
     work = Path(args.work).resolve()
     status_dir = Path(args.status).resolve() if args.status else None
@@ -862,6 +904,8 @@ def main() -> int:
 
     runs: list[Run] = []
     for case in cases:
+        if ONLY_TARGETS and not ONLY_TARGETS & set(case.tables()):
+            continue  # none of the case's targets is checked
         for linkage in case.linkages():
             if linkage and args.linkage and linkage not in args.linkage:
                 continue

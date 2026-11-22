@@ -1,0 +1,9 @@
+# Ask the built-in Public Suffix List for public suffixes and registrable domains.
+[example]
+description = "Ask the built-in Public Suffix List for public suffixes and registrable domains."
+sources = ["main.c"]
+
+[consumer]
+# the recipe gives no CMake package: otok's own targets
+link = ["otok::PSL"]
+products = ["PSL"]

@@ -1,0 +1,9 @@
+# Hash a text with SHA-256 through EVP and make a TLS client context: libcrypto and libssl.
+[example]
+description = "Hash a text with SHA-256 through EVP and make a TLS client context: libcrypto and libssl."
+sources = ["main.c"]
+
+[consumer]
+package = "OpenSSL"
+link = ["OpenSSL::SSL", "OpenSSL::Crypto"]
+products = ["OpenSSL"]

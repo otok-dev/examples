@@ -1,0 +1,9 @@
+# Encode QUIC transport parameters and decode them again; initialize ngtcp2's OpenSSL helper.
+[example]
+description = "Encode QUIC transport parameters and decode them again; initialize ngtcp2's OpenSSL helper."
+sources = ["main.c"]
+
+[consumer]
+package = "ngtcp2"
+link = ["ngtcp2::ngtcp2", "ngtcp2::ngtcp2_crypto_ossl"]
+products = ["NGTCP2"]

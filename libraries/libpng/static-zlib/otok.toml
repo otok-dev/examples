@@ -1,0 +1,24 @@
+# A dynamic libpng with its zlib static inside it, which the project does not name in [deps]: a profile's
+# deps.<library> sets the linkage of a library of the graph (otok-toml.md 8). The consumer gets zlib's headers through
+# libpng's product, not its code, and libpng exports none of zlib's symbols (otok-toml.md 5.2). Windows (MSVC) and Linux
+# (GCC), where libpng takes the zlib of its recipe, in both configurations. tools/check.py selects the profile
+# otok-examples and adds the linkage of the target tables to it.
+[otok]
+format = 1
+
+[windows]
+build-on = ["windows/msvc"]
+configurations = ["debug", "release"]
+output = "Otok/windows"
+
+[linux]
+build-on = ["linux/gcc"]
+configurations = ["debug", "release"]
+output = "Otok/linux"
+
+[deps.libpng]
+recipe = "apotocki/libpng"
+version = "~> 1.6"
+
+[profile.otok-examples.deps.zlib]
+linkage = "static"

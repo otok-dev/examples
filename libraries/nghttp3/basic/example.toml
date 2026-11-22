@@ -1,0 +1,9 @@
+# Encode HTTP/3 header fields with QPACK and decode them again.
+[example]
+description = "Encode HTTP/3 header fields with QPACK and decode them again."
+sources = ["main.c"]
+
+[consumer]
+package = "nghttp3"
+link = ["nghttp3::nghttp3"]
+products = ["NGHTTP3"]

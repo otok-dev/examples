@@ -1,0 +1,9 @@
+# Hash a text with SHA-256 through PSA Crypto and set up a TLS client configuration.
+[example]
+description = "Hash a text with SHA-256 through PSA Crypto and set up a TLS client configuration."
+sources = ["main.c"]
+
+[consumer]
+package = "MbedTLS"
+link = ["MbedTLS::mbedtls"]
+products = ["MbedTLS"]

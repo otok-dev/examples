@@ -1,0 +1,12 @@
+# libpng dynamic, zlib static inside it (otok decision 136).
+[example]
+description = "A dynamic libpng holding a static zlib: zlib's headers reach the program, its code stays hidden in libpng."
+issue = "https://github.com/otok-dev/otok, docs/PLAN.md decision 136"
+sources = ["main.c"]
+linkage = ["dynamic"]
+
+[consumer]
+package = "PNG"
+link = ["PNG::PNG"]
+products = ["PNG"]
+consumers = ["cmake", "msbuild"]

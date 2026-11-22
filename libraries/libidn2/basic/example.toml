@@ -1,0 +1,9 @@
+# Convert an internationalized domain name to its ASCII form and back.
+[example]
+description = "Convert an internationalized domain name to its ASCII form and back."
+sources = ["main.c"]
+
+[consumer]
+# the recipe gives no CMake package: otok's own targets
+link = ["otok::IDN2"]
+products = ["IDN2"]

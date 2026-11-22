@@ -1,0 +1,9 @@
+# Start a libssh2 session and list the key exchange and cipher methods its crypto backend gives.
+[example]
+description = "Start a libssh2 session and list the key exchange and cipher methods its crypto backend gives."
+sources = ["main.c"]
+
+[consumer]
+package = "libssh2"
+link = ["libssh2::libssh2"]
+products = ["LibSSH2"]

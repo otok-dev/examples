@@ -1,0 +1,9 @@
+# Initialize libcurl with its TLS backend, parse a URL with the URL API and escape a text.
+[example]
+description = "Initialize libcurl with its TLS backend, parse a URL with the URL API and escape a text."
+sources = ["main.c"]
+
+[consumer]
+package = "CURL"
+link = ["CURL::libcurl"]
+products = ["CURL"]

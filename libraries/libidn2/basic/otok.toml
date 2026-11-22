@@ -1,0 +1,19 @@
+# libidn2 as its recipe builds it by default, for every Android ABI and Linux (GCC), in both configurations (its
+# recipes are for these targets alone). Each target in an output of its own. The linkage is the
+# target's default (static) unless a profile changes it.
+[otok]
+format = 1
+
+[android]
+deployment = { android = "24" }
+configurations = ["debug", "release"]
+output = "Otok/android"
+
+[linux]
+build-on = ["linux/gcc"]
+configurations = ["debug", "release"]
+output = "Otok/linux"
+
+[deps.libidn2]
+recipe = "apotocki/libidn2"
+version = "~> 2.3"

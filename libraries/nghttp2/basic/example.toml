@@ -1,0 +1,9 @@
+# Compress HTTP/2 header fields with HPACK and inflate them again.
+[example]
+description = "Compress HTTP/2 header fields with HPACK and inflate them again."
+sources = ["main.c"]
+
+[consumer]
+package = "nghttp2"
+link = ["nghttp2::nghttp2"]
+products = ["NGHTTP2"]
